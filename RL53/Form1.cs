@@ -16,34 +16,55 @@ namespace RL53
 {
     public partial class Form1 : Form
     {
+        private BackgroundWorker worker;
+
         public Form1()
         {
             InitializeComponent();
+        }
 
+        public void GeneratePDF(object sender, DoWorkEventArgs e)
+        {
             using (var doc = new Document())
-            //using (var pdf = new PdfCopy(doc, file))
+            using (var file = new FileStream(this.outputPdfTextbox.Text, FileMode.Create))
+            using (var pdf = new PdfCopy(doc, file))
             {
                 doc.Open();
                 int i = 1;
-                foreach (var record in ReadCSV("C:\\Users\\markg\\Downloads\\RL-53-2017-11-01.csv"))
+                int lineCount = this.NumberOfLines(this.csvExportTextbox.Text);
+                foreach (var record in ReadCSV(this.csvExportTextbox.Text))
                 {
-
-                    var filename = "C:\\Users\\markg\\Downloads\\out\\page" + i.ToString("D4") + ".pdf";
-                    using (var reader = new PdfReader("C:\\Users\\markg\\Downloads\\RL-53.pdf"))
-                    using (var file = new FileStream(filename, FileMode.Create))
-                    using (var pdfStamper = new PdfStamper(reader, file))
+                    var stream = new MemoryStream();
+                    using (var reader = new PdfReader(this.rl53SourceTextbox.Text))
+                    using (var pdfStamper = new PdfStamper(reader, stream))
                     {
                         pdfStamper.FormFlattening = true;
                         pdfStamper.Writer.CloseStream = false;
                         foreach (var column in record)
-                        {
                             pdfStamper.AcroFields.SetField(column.Key, column.Value);
-                        }
                     }
 
+                    CopyPages(pdf, stream);
+                    worker.ReportProgress((int)((float)i / lineCount * 100));
                     i++;
                 }
             }
+
+            worker.ReportProgress(100);
+        }
+
+        private static void CopyPages(PdfCopy pdf, MemoryStream stream)
+        {
+            using (var reader = new PdfReader(stream.GetBuffer()))
+            {
+                for (int pageNumber = 0; pageNumber < reader.NumberOfPages; ++pageNumber)
+                    pdf.AddPage(pdf.GetImportedPage(reader, pageNumber + 1));
+            }
+        }
+
+        private int NumberOfLines(string filename)
+        {
+            return File.ReadLines(filename).Count();
         }
 
         private IEnumerable<IDictionary<string, string>> ReadCSV(string filename)
@@ -64,6 +85,109 @@ namespace RL53
                     yield return row;
                 }
             }
+        }
+
+        #region [ File Browsing Handlers ]
+
+        private void outputPdfBrowse_Click(object sender, EventArgs e)
+        {
+            var dialog = new SaveFileDialog
+            {
+                AddExtension = true,
+                DefaultExt = "pdf",
+                Title = "Select new PDF to create",
+                OverwritePrompt = true
+            };
+
+            if (dialog.ShowDialog() == DialogResult.OK)
+            {
+                outputPdfTextbox.Text = dialog.FileName;
+            }
+        }
+
+        private void csvExportBrowse_Click(object sender, EventArgs e)
+        {
+            var dialog = new OpenFileDialog
+            {
+                AddExtension = true,
+                DefaultExt = "csv",
+                Title = "Open Winestyr RL53 CSV export"
+            };
+
+            if (dialog.ShowDialog() == DialogResult.OK)
+            {
+                csvExportTextbox.Text = dialog.FileName;
+            }
+        }
+
+        private void rl53SourceFileBrowse_Click(object sender, EventArgs e)
+        {
+            var dialog = new OpenFileDialog
+            {
+                AddExtension = true,
+                DefaultExt = "csv",
+                Title = "Open IL RL53 source PDF"
+            };
+
+            if (dialog.ShowDialog() == DialogResult.OK)
+            {
+                rl53SourceTextbox.Text = dialog.FileName;
+            }
+        }
+
+        #endregion
+
+        private void generateButton_Click(object sender, EventArgs e)
+        {
+            if (!ValidateTextBoxes())
+                return;
+
+            if (this.worker != null && this.worker.IsBusy)
+                return;
+
+            if (this.worker != null)
+                this.worker.Dispose();
+
+            this.worker = new BackgroundWorker();
+
+            this.worker.DoWork += new DoWorkEventHandler(GeneratePDF);
+            this.worker.WorkerReportsProgress = true;
+            this.worker.ProgressChanged += Worker_ProgressChanged;
+            this.worker.RunWorkerCompleted += Worker_RunWorkerCompleted;
+
+            this.worker.RunWorkerAsync();
+        }
+
+        private void Worker_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            MessageBox.Show("Export Complete", "Done", MessageBoxButtons.OK);
+            this.progressBar.Value = 0;
+        }
+
+        private void Worker_ProgressChanged(object sender, ProgressChangedEventArgs e)
+        {
+            this.progressBar.Value = e.ProgressPercentage;
+        }
+
+        private bool ValidateTextBoxes()
+        {
+            if (!File.Exists(rl53SourceTextbox.Text))
+            {
+                MessageBox.Show("Missing RL53 source file", "Validation Error", MessageBoxButtons.OK);
+                return false;
+            }
+            if (!File.Exists(csvExportTextbox.Text))
+            {
+                MessageBox.Show("Missing Winestyr CSV export file", "Validation Error", MessageBoxButtons.OK);
+                return false;
+            }
+            if (String.IsNullOrWhiteSpace(outputPdfTextbox.Text))
+            {
+                MessageBox.Show("Missing output PDF file", "Validation Error", MessageBoxButtons.OK);
+                return false;
+            }
+
+            return true;
         }
     }
 }
